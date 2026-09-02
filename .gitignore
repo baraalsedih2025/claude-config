@@ -1,0 +1,39 @@
+# Secrets & credentials — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa*
+id_ed25519*
+.credentials.json
+credentials.json
+*credentials*
+*secret*
+*token*
+.netrc
+.npmrc
+.pgpass
+*.kubeconfig
+kubeconfig
+
+# Claude Code local state — machine-specific, may contain conversation data
+*.jsonl
+transcripts/
+projects/
+sessions/
+shell-snapshots/
+file-history/
+paste-cache/
+stats-cache.json
+history.jsonl
+settings.local.json
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
