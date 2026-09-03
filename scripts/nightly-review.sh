@@ -14,6 +14,7 @@
 #   CLAUDE_DIR   default ~/.claude
 #   LOG_FILE     default ~/.claude-config-review.log
 #   CLAUDE_BIN   default `claude` from PATH
+#   CLAUDE_HOST  stable fleet name for this machine (default: `hostname`)
 #   MODEL        default opus
 #   NO_PUSH=1    do everything but the push (useful for a first dry run)
 
@@ -26,8 +27,28 @@ CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 MODEL="${MODEL:-opus}"
 NO_PUSH="${NO_PUSH:-0}"
 
+# --- host identity ------------------------------------------------------------
+#
+# CLAUDE_HOST is this machine's stable fleet name. Precedence:
+#   1. CLAUDE_HOST already exported in the environment
+#   2. CLAUDE_HOST set in ~/.claude-config.env  (override HOST_ENV_FILE to move it)
+#   3. `hostname` — fine on real hosts, but an ephemeral ID inside a container
+_claude_host_preset="${CLAUDE_HOST:-}"
+HOST_ENV_FILE="${HOST_ENV_FILE:-$HOME/.claude-config.env}"
+if [ -f "$HOST_ENV_FILE" ]; then
+  # shellcheck source=/dev/null
+  . "$HOST_ENV_FILE"
+fi
+CLAUDE_HOST="${_claude_host_preset:-${CLAUDE_HOST:-$(hostname)}}"
+# Was it pinned deliberately, or did we fall back to `hostname`?
+if [ -n "$_claude_host_preset" ] || [ "$CLAUDE_HOST" != "$(hostname)" ]; then
+  CLAUDE_HOST_PINNED=1
+else
+  CLAUDE_HOST_PINNED=0
+fi
+
 DATE="$(date +%F)"
-HOST="$(hostname)"
+HOST="$CLAUDE_HOST"
 BRANCH="proposal/${DATE}-${HOST}"
 OUT_REL="proposals/${DATE}-${HOST}.md"
 
@@ -140,7 +161,7 @@ trap 'rm -f "$PROMPT_FILE" "$RESULT_FILE"' EXIT
   echo "  - Never include secrets, tokens, keys, passwords, connection strings or"
   echo "    hostnames-with-credentials. Redact if you must reference one."
   echo "  - Flag anything that looks specific to a single host, so it can go to"
-  echo "    hosts/<hostname>.md instead of the shared CLAUDE.md."
+  echo "    hosts/<host>.md instead of the shared CLAUDE.md."
   echo "  - If nothing meets the bar, say exactly: NO PROPOSALS."
   echo
   echo "## Required output format"

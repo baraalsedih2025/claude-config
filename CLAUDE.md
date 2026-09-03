@@ -9,9 +9,8 @@ yesterday's sessions produced anything worth remembering.
        find ~/.claude/projects -name '*.jsonl' -newermt "$Y" ! -newermt "$T"
 
    Use **ISO dates, not the words `yesterday`/`today`**, in `-newermt`:
-   `find` here is a shell function wrapping `bfs` 4.1.1, which rejects the words
-   outright; and GNU `/usr/bin/find` parses `today` as *now*, not midnight, so
-   `! -newermt today` filters out nothing and today's own sessions leak in.
+   GNU `find` parses `today` as *now*, not midnight, so `! -newermt today`
+   filters out nothing and today's own sessions leak in.
    Skip this session's own file. If nothing comes back, say nothing and carry on.
    Transcripts are periodically pruned (see `~/.claude/.last-cleanup`), so a day
    of work can legitimately leave no file.
