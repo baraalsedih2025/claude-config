@@ -88,9 +88,13 @@ cd "$REPO_DIR"
 
 git remote get-url origin >/dev/null 2>&1 || die "no 'origin' remote configured — add one first"
 
-log "syncing main"
-git checkout -q main || die "cannot check out main"
-git pull --ff-only -q origin main || die "pull of origin/main failed"
+# Pull main with full logging of what came in. Fast-forward only; a dirty tree
+# skips the pull and continues; divergence aborts. See scripts/lib/pull.sh.
+_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pull.sh"
+[ -f "$_LIB" ] || die "missing $_LIB — refusing to run without the pull step"
+# shellcheck source=lib/pull.sh
+. "$_LIB"
+pull_main
 
 # --- 1. find transcripts touched in the last 24h ------------------------------
 #
