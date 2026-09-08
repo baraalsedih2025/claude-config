@@ -1,4 +1,4 @@
-# Host: dev-local
+# Host: sgh-dev
 
 Per-host overrides for this machine. Not symlinked automatically — append or
 `@`-include from the global CLAUDE.md only if you want it active here.

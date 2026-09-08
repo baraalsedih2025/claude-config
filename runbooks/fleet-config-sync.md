@@ -128,7 +128,7 @@ them. `export` is required, not cosmetic.
   this host, or is deliberately manual.
 - `unknown — nobody knows` — whether any other host in the fleet runs these
   scripts. No second host was inspected; `hosts/` contains one other file
-  (`dev-local.md`) of unknown currency.
+  (`sgh-dev.md`) of unknown currency.
 - `unknown — nobody knows` — whether anyone other than the owner has ever
   reviewed or merged a sync PR. `oncall.md` B1 records that nobody else can.
 - `unknown — nobody knows` — who watches the 03:30 cron for failures. Nothing
