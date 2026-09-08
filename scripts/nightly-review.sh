@@ -7,6 +7,9 @@
 #   * never commits to main
 #   * never edits CLAUDE.md, skills/ or commands/ — it only adds one file under
 #     proposals/, and aborts if anything else turns up staged
+#   * secret-scans BOTH directions: the transcripts it reads (step 1b, with
+#     gitleaks, before the model sees them) and the proposal it writes (step 4).
+#     A live-looking token in either one fails the run; requires gitleaks.
 #   * logs to ~/.claude-config-review.log, exits nonzero on any failure
 #
 # Env:
@@ -70,6 +73,10 @@ die() { printf '%s [nightly-review] FAIL: %s\n' "$(date -u +%FT%TZ)" "$*"; exit 
 log "=== start (host=$HOST branch=$BRANCH) ==="
 
 command -v "$CLAUDE_BIN" >/dev/null 2>&1 || die "'$CLAUDE_BIN' not on PATH ($PATH)"
+# Hard requirement: step 1b scans the transcripts this script feeds to the
+# model, and a review that cannot scan its own source material must not run.
+# No regex fallback.
+command -v gitleaks >/dev/null 2>&1 || die "gitleaks not on PATH ($PATH) — refusing to run (no regex fallback)"
 [ -d "$REPO_DIR/.git" ] || die "$REPO_DIR is not a git clone"
 [ -d "$CLAUDE_DIR/projects" ] || die "$CLAUDE_DIR/projects not found — no transcripts to read"
 
@@ -81,9 +88,13 @@ cd "$REPO_DIR"
 
 git remote get-url origin >/dev/null 2>&1 || die "no 'origin' remote configured — add one first"
 
-log "syncing main"
-git checkout -q main || die "cannot check out main"
-git pull --ff-only -q origin main || die "pull of origin/main failed"
+# Pull main with full logging of what came in. Fast-forward only; a dirty tree
+# skips the pull and continues; divergence aborts. See scripts/lib/pull.sh.
+_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pull.sh"
+[ -f "$_LIB" ] || die "missing $_LIB — refusing to run without the pull step"
+# shellcheck source=lib/pull.sh
+. "$_LIB"
+pull_main
 
 # --- 1. find transcripts touched in the last 24h ------------------------------
 #
@@ -103,6 +114,49 @@ if [ "${#TRANSCRIPTS[@]}" -eq 0 ]; then
   log "=== end ==="
   exit 0
 fi
+
+# --- 1b. secret-scan the SOURCE MATERIAL, before Claude ever reads it ---------
+#
+# Step 4 scans the proposal this script WRITES. That is not sufficient on its
+# own: transcripts record whatever was typed into a session, so a token pasted
+# into a prompt is sitting in this input in plaintext. Relying only on the
+# output scan means the credential is handed to the model, and the one thing
+# standing between it and a committed file is the model choosing not to quote
+# it -- a guarantee no regex can enforce after the fact.
+#
+# So scan the inputs and refuse to proceed. Deliberately fails the whole run
+# rather than skipping the offending file: a transcript holding a live
+# credential is something a human needs to know about and scrub, and quietly
+# reviewing the other four would bury it in a log nobody reads.
+#
+# --exit-code 2 separates "found a secret" from "the scanner broke"; both
+# refuse, but they are different problems.
+log "secret-scanning ${#TRANSCRIPTS[@]} transcript(s) before handing them to $CLAUDE_BIN"
+SCAN_REPORT="$(mktemp --suffix=.json)"
+SCAN_LOG="$(mktemp)"
+TAINTED=()
+for _t in "${TRANSCRIPTS[@]}"; do
+  _rc=0
+  gitleaks dir "$_t" --no-banner --redact --exit-code 2 \
+    --report-format json --report-path "$SCAN_REPORT" >"$SCAN_LOG" 2>&1 || _rc=$?
+  case "$_rc" in
+    0) ;;
+    2) TAINTED+=("$_t") ;;
+    *) log "gitleaks failed to run on $_t (exit $_rc):"
+       sed 's/^/    /' "$SCAN_LOG"
+       rm -f "$SCAN_REPORT" "$SCAN_LOG"
+       die "cannot scan source material — refusing to feed unscanned transcripts to the model" ;;
+  esac
+done
+rm -f "$SCAN_REPORT" "$SCAN_LOG"
+
+if [ "${#TAINTED[@]}" -gt 0 ]; then
+  log "credential-shaped content found in ${#TAINTED[@]} transcript(s):"
+  printf '%s\n' "${TAINTED[@]}" | sed 's/^/    /'
+  log "scrub these files and rotate the credentials, then re-run."
+  die "live-looking token in source material — nothing sent to the model, nothing committed"
+fi
+log "source material clean"
 
 # --- 2. ask Claude, headless --------------------------------------------------
 #
@@ -162,6 +216,41 @@ trap 'rm -f "$PROMPT_FILE" "$RESULT_FILE"' EXIT
   echo "    hostnames-with-credentials. Redact if you must reference one."
   echo "  - Flag anything that looks specific to a single host, so it can go to"
   echo "    hosts/<host>.md instead of the shared CLAUDE.md."
+  echo "  - BaraAlSedih.md is a profile of the user: role, stack, working"
+  echo "    preferences, environment quirks, current projects. When these"
+  echo "    sessions reveal a DURABLE fact about the user rather than about the"
+  echo "    code -- a stated preference, a correction given more than once, a"
+  echo "    tool or domain they clearly work in, a machine quirk that keeps"
+  echo "    costing time, a project that has started or finished -- propose it"
+  echo "    against that file, with hosts/<host>.md for anything true of only"
+  echo "    one machine. Same gate as everything else: it lands in the proposal"
+  echo "    for a human to merge, never applied directly."
+  echo "  - Do not put secrets, tokens, internal hostnames, ports or client and"
+  echo "    organisation names in a BaraAlSedih.md proposal; describe the fact"
+  echo "    generically instead. Date anything that will go stale, so it can be"
+  echo "    pruned later."
+  echo "  - runbooks/<system>.md exists so someone else can cover for the user."
+  echo "    When a session shows a system being DIAGNOSED -- a symptom traced to"
+  echo "    a cause and then fixed -- judge whether it was a NOVEL FAILURE MODE:"
+  echo "    not already in that system's runbook, and not a one-off typo. If so,"
+  echo "    draft the entry: the symptom as it first appeared, the check that"
+  echo "    localised it, the fix that worked, and how health was confirmed"
+  echo "    afterwards. Propose a new runbook file when the system has none."
+  echo "    Read runbooks/README.md for the required sections and match them."
+  echo "  - Weight these three above the rest, because they cannot be recovered"
+  echo "    from the code later: (a) the NON-OBVIOUS fix, especially where the"
+  echo "    obvious one is wrong; (b) LOOKS BROKEN BUT ISN'T -- an alarming"
+  echo "    state that is normal, which is what causes a 2am 'fix' that breaks"
+  echo "    production; (c) DO NOT -- an action that makes things worse or is"
+  echo "    someone else's to take. Quote the user's own wording where they"
+  echo "    stated a constraint."
+  echo "  - decisions/<topic>.md is for reasoning, not procedure. If the session"
+  echo "    reveals WHY something is deliberately awkward -- a constraint that"
+  echo "    makes a design look wrong until explained -- propose it there"
+  echo "    instead, and say what the decision rules out."
+  echo "  - oncall.md: propose an entry when a session exposes access or"
+  echo "    knowledge that only the user holds. Name the credential store and"
+  echo "    who grants it. NEVER a credential value, in any of these files."
   echo "  - If nothing meets the bar, say exactly: NO PROPOSALS."
   echo
   echo "## Required output format"

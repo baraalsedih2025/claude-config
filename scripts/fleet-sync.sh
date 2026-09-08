@@ -132,6 +132,17 @@ GH_LOGIN="$(gh api user --jq .login 2>/dev/null || true)"
 [ -n "$GH_LOGIN" ] || die "gh cannot authenticate — set GH_TOKEN (see $HOST_ENV_FILE) or run 'gh auth login'"
 log "authenticated to github as $GH_LOGIN"
 
+# --- 0a. pull main from origin, before reading any local state ---------------
+#
+# Without this the clone drifts behind origin/main every day and this host keeps
+# proposing changes against a stale baseline. Fast-forward only; a dirty tree
+# skips the pull and continues; divergence aborts. See scripts/lib/pull.sh.
+_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pull.sh"
+[ -f "$_LIB" ] || die "missing $_LIB — refusing to run without the pull step"
+# shellcheck source=lib/pull.sh
+. "$_LIB"
+pull_main
+
 # --- 0b. credential-shaped files, BEFORE the clean-tree exit ------------------
 #
 # This runs on every invocation, including runs with nothing to sync, and that
