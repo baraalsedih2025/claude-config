@@ -1,0 +1,65 @@
+# /etc/sudoers.d/<project>-deploy   --   mode 0440, root:root
+#
+# Root rights for EXACTLY the deploy commands and nothing else.
+#
+# --- READ THIS BEFORE EDITING -----------------------------------------------
+#
+# 1. SUDOERS MATCHES THE COMMAND STRING LITERALLY, character for character.
+#    Every flag the script passes must appear identically here. Adding
+#    `--exclude=foo` to the script without updating this file silently turns a
+#    passwordless call into a password prompt -- which, in a non-interactive
+#    systemd timer, just hangs or fails.
+#
+# 2. `visudo -c -f` VALIDATES GRAMMAR, NOT CORRECTNESS. A rule with
+#    `--chown\:a\:b` (missing the `=`) parses fine and would never match the
+#    real `--chown=a:b`. After installing, always prove the rules MATCH:
+#
+#        sudo -l -U <project>-deploy
+#
+#    and compare the printed rule against the script's actual command line.
+#
+# 3. ESCAPING: only `:` needs `\:` inside a value (`--chown=dev2\:dev1`).
+#    The `=` stays literal. Line continuations are `\` at end of line.
+#
+# 4. DELIBERATELY NOT WILDCARDED. A wildcard `docker exec` into a DinD
+#    container is root on every stack on the box. A wildcard `rsync *` is
+#    root-writable-anywhere. Accept the maintenance cost of exact lines.
+#
+# 5. The deploy account must NOT be in the `docker` group -- that is
+#    root-equivalent (`docker run -v /:/host`) and defeats all of this.
+#
+# Install: write to a .new file, validate, then mv into place.
+#
+#     visudo -c -q -f /etc/sudoers.d/<project>-deploy.new && \
+#       install -m 0440 -o root -g root \
+#         /etc/sudoers.d/<project>-deploy.new /etc/sudoers.d/<project>-deploy
+#
+# ----------------------------------------------------------------------------
+
+Cmnd_Alias DEPLOY_<PROJECT> = \
+    /usr/bin/rsync -a --delete --chown=<user>\:<group> --exclude=.env --exclude=.git /home/<project>-deploy/<project>-src/checkout/ /srv/deployments/<project>/, \
+    /usr/bin/docker compose --project-directory /srv/deployments/<project> build --pull, \
+    /usr/bin/docker compose --project-directory /srv/deployments/<project> up -d --force-recreate --remove-orphans
+
+<project>-deploy ALL=(root) NOPASSWD: DEPLOY_<PROJECT>
+
+# --- NESTED DOCKER (DinD) VARIANT -------------------------------------------
+# When the stack runs inside a DinD container, the compose lines become
+# `docker exec` into it, and the -w path is the path as the DinD sees it:
+#
+# Cmnd_Alias DEPLOY_<PROJECT> = \
+#     /usr/bin/rsync -a --chown=<user>\:<group> --delete --exclude=.git --exclude=.env --exclude=docker-compose.override.yml /home/<project>-deploy/<project>-src/ /home/dev1/workspace/deployments/<project>/, \
+#     /usr/bin/docker exec -w /workspace/deployments/<project> ml-team docker compose build --pull, \
+#     /usr/bin/docker exec -w /workspace/deployments/<project> ml-team docker compose down --remove-orphans, \
+#     /usr/bin/docker exec -w /workspace/deployments/<project> ml-team docker compose up -d --force-recreate, \
+#     /usr/bin/docker exec ml-team docker ps --filter name=<project>
+#
+# --- SSH-TRIGGERED VARIANT --------------------------------------------------
+# If a push-style trigger is possible instead of polling, confine the key with a
+# forced command in authorized_keys:
+#
+#   command="/usr/local/bin/<project>-deploy",no-port-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA...
+#
+# and read the requested tag from $SSH_ORIGINAL_COMMAND, validating it against a
+# strict regex before use. `rrsync -wo <dir>` similarly confines rsync to one
+# directory (the client's remote_path then becomes just `./`).

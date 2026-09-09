@@ -3,7 +3,8 @@
 # install.sh — onboard this machine onto the shared Claude config repo.
 #
 # Clones (or pulls) the repo, then symlinks the well-known Claude Code paths at
-# ~/.claude to the repo copies. Idempotent: safe to re-run any number of times.
+# ~/.claude to the repo copies, and installs the gitleaks pre-commit hook.
+# Idempotent: safe to re-run any number of times.
 # Nothing is ever overwritten or deleted without first being moved into
 # ~/.claude/backups/<UTC timestamp>/.
 #
@@ -79,7 +80,7 @@ else
   die "$REPO_DIR is not a git clone and REPO_URL is unset. Set REPO_URL=<git-url>."
 fi
 
-for required in CLAUDE.md skills commands; do
+for required in CLAUDE.md skills commands hooks/pre-commit; do
   [ -e "$REPO_DIR/$required" ] || die "repo is missing $required — wrong REPO_DIR?"
 done
 
@@ -118,7 +119,52 @@ link_one CLAUDE.md "$CLAUDE_DIR/CLAUDE.md"
 link_one skills    "$CLAUDE_DIR/skills"
 link_one commands  "$CLAUDE_DIR/commands"
 
-# --- 3. per-host file ---------------------------------------------------------
+# --- 3. secret scanning: gitleaks + pre-commit hook ---------------------------
+
+GITLEAKS_VERSION="8.30.1"
+
+if command -v gitleaks >/dev/null 2>&1; then
+  log "gitleaks present: $(gitleaks version)"
+else
+  log "WARNING: gitleaks is NOT installed."
+  log "WARNING: The pre-commit hook fails closed, so commits in this repo will"
+  log "WARNING: be BLOCKED until you install it:"
+  log "WARNING:"
+  log "WARNING:   VER=$GITLEAKS_VERSION"
+  log "WARNING:   curl -fsSL -o /tmp/gitleaks.tar.gz \\"
+  log "WARNING:     https://github.com/gitleaks/gitleaks/releases/download/v\$VER/gitleaks_\${VER}_linux_x64.tar.gz"
+  log "WARNING:   mkdir -p \$HOME/.local/bin"
+  log "WARNING:   tar xzf /tmp/gitleaks.tar.gz gitleaks -O > \$HOME/.local/bin/gitleaks"
+  log "WARNING:   chmod 755 \$HOME/.local/bin/gitleaks"
+  log "WARNING:"
+  log "WARNING: (ensure \$HOME/.local/bin is on PATH)"
+fi
+
+# Install the repo's hook into .git/hooks. Backed up like everything else.
+HOOK_SRC="$REPO_DIR/hooks/pre-commit"
+HOOK_DEST="$REPO_DIR/.git/hooks/pre-commit"
+
+if [ -e "$HOOK_DEST" ] && cmp -s "$HOOK_SRC" "$HOOK_DEST"; then
+  log "pre-commit hook already current — skipping"
+else
+  if [ -e "$HOOK_DEST" ]; then
+    run mkdir -p "$BACKUP_DIR"
+    log "backing up existing pre-commit hook -> $BACKUP_DIR/"
+    if [ "$DRY_RUN" = 1 ]; then
+      printf '[dry-run] cp -a %s %s/pre-commit.hook.bak\n' "$HOOK_DEST" "$BACKUP_DIR"
+    else
+      cp -a "$HOOK_DEST" "$BACKUP_DIR/pre-commit.hook.bak" \
+        || die "backup of existing hook failed — refusing to replace it"
+    fi
+  fi
+  log "installing pre-commit hook -> $HOOK_DEST"
+  # Copied, not symlinked: git refuses to run a hook that is a dangling link,
+  # and a copy keeps working if the repo is later moved.
+  run cp "$HOOK_SRC" "$HOOK_DEST"
+  run chmod +x "$HOOK_DEST"
+fi
+
+# --- 4. per-host file ---------------------------------------------------------
 
 HOST_FILE="$REPO_DIR/hosts/$CLAUDE_HOST.md"
 if [ ! -e "$HOST_FILE" ]; then

@@ -1,0 +1,27 @@
+# gitleaks configuration for the shared Claude config repo.
+#
+# Extends the upstream default ruleset (all built-in detectors stay active) and
+# adds allowlisting for the false positives this repo legitimately contains.
+#
+# Scanned by hooks/pre-commit on every commit and by scripts/nightly-review.sh
+# over each generated proposal. Do not add allowlist entries for real secrets —
+# rotate the credential instead.
+
+title = "claude-config"
+
+[extend]
+# Pull in the full upstream default ruleset rather than replacing it.
+useDefault = true
+
+[allowlist]
+description = "Repo-wide false positives"
+
+paths = [
+  # The scanner's own config: rule names and regexes here are not secrets.
+  '''\.gitleaks\.toml$''',
+]
+
+regexes = [
+  # Placeholder shown in install.sh's container-ID warning.
+  '''CLAUDE_HOST=my-fleet-name''',
+]
