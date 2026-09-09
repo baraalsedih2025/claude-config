@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# pre-commit — block commits containing secrets.
+#
+# Installed to .git/hooks/pre-commit by scripts/install.sh. Fails CLOSED: if
+# gitleaks is not installed the commit is refused rather than allowed through
+# unscanned.
+#
+# Bypassing this hook with `git commit --no-verify` is a policy violation.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  cat >&2 <<'MSG'
+[pre-commit] BLOCKED: gitleaks is not installed, so staged changes cannot be
+[pre-commit] scanned for secrets. This hook fails closed by design.
+[pre-commit]
+[pre-commit] Install it, then retry the commit:
+[pre-commit]
+[pre-commit]   VER=8.30.1
+[pre-commit]   curl -fsSL -o /tmp/gitleaks.tar.gz \
+[pre-commit]     "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz"
+[pre-commit]   mkdir -p ~/.local/bin
+[pre-commit]   tar xzf /tmp/gitleaks.tar.gz gitleaks -O > ~/.local/bin/gitleaks
+[pre-commit]   chmod 755 ~/.local/bin/gitleaks
+[pre-commit]
+[pre-commit] (ensure ~/.local/bin is on PATH)
+MSG
+  exit 1
+fi
+
+echo "[pre-commit] scanning staged changes with gitleaks $(gitleaks version)"
+
+if ! gitleaks git --staged --redact --no-banner "$REPO_ROOT"; then
+  cat >&2 <<'MSG'
+[pre-commit] BLOCKED: gitleaks flagged a potential secret in the staged changes.
+[pre-commit] Findings are listed above with values redacted.
+[pre-commit]
+[pre-commit] Remove the secret from the staged content and commit again. If the
+[pre-commit] value was ever real, rotate it — it may already be compromised.
+[pre-commit] Do NOT use --no-verify.
+MSG
+  exit 1
+fi
+
+echo "[pre-commit] clean"

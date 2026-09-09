@@ -298,17 +298,19 @@ mkdir -p "$REPO_DIR/proposals"
 } > "$REPO_DIR/$OUT_REL"
 
 # --- 4. secret scan before staging anything -----------------------------------
+#
+# gitleaks only. Fails CLOSED: a missing scanner aborts the run rather than
+# silently downgrading to a weaker check.
 
-log "scanning proposal for secrets"
-if grep -nEi \
-  -e '(api[_-]?key|secret|passwd|password|access[_-]?token|refresh[_-]?token|bearer)[[:space:]]*[:=][[:space:]]*[A-Za-z0-9/_+=-]{12,}' \
-  -e 'BEGIN [A-Z ]*PRIVATE KEY' \
-  -e '\b(sk-ant-|ghp_|gho_|github_pat_|AKIA[0-9A-Z]{16}|xox[abprs]-)' \
-  -e '(postgres|postgresql|mysql|mongodb\+srv|redis|amqp)://[^[:space:]/]*:[^[:space:]@]+@' \
-  "$REPO_DIR/$OUT_REL"
-then
+command -v gitleaks >/dev/null 2>&1 || {
   rm -f "$REPO_DIR/$OUT_REL"
-  die "possible secret in generated proposal (locations above) — proposal discarded, nothing committed"
+  die "gitleaks not installed — cannot scan the proposal. Proposal discarded, nothing committed."
+}
+
+log "scanning proposal with gitleaks $(gitleaks version)"
+if ! gitleaks dir --redact --no-banner --no-color "$REPO_DIR/$OUT_REL"; then
+  rm -f "$REPO_DIR/$OUT_REL"
+  die "gitleaks flagged the generated proposal (findings above, values redacted) — proposal discarded, nothing committed"
 fi
 log "secret scan clean"
 
